@@ -1,0 +1,262 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Potree Player</title>
+  <link rel="stylesheet" href="/potree/build/potree/potree.css" />
+  <link rel="stylesheet" href="/potree/libs/jquery-ui/jquery-ui.min.css" />
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #potree_container {
+      position: absolute;
+      inset: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="potree_container"></div>
+
+  <script src="./libs/jquery/jquery-3.1.1.min.js"></script>
+  <script src="./libs/jquery-ui/jquery-ui.min.js"></script>
+  <script src="./libs/other/BinaryHeap.js"></script>
+  <script src="./libs/tween/tween.min.js"></script>
+  <script src="./libs/d3/d3.js"></script>
+  <script src="./libs/proj4/proj4.js"></script>
+  <script src="./libs/i18next/i18next.js"></script>
+  <script src="./libs/jstree/jstree.js"></script>
+  <script src="./libs/spectrum/spectrum.js"></script>
+  <script src="./libs/three.js/build/three.min.js"></script>
+  <script src="./build/potree/potree.js"></script>
+  <script src="./libs/plasio/js/laslaz.js"></script>
+
+  <script>
+    const container = document.getElementById("potree_container");
+    const viewer = new Potree.Viewer(container);
+    viewer.setEDLEnabled(false);
+    viewer.setFOV(60);
+    viewer.setPointBudget(2_000_000);
+    viewer.loadSettingsFromURL();
+    viewer.setBackground("gradient");
+
+    let scans = null;
+    let poses = null;
+    let timer = null;
+    let playing = false;
+    let frameIndex = 0;
+
+    const loadedQueue = [];
+    const loadedMap = new Map();
+    const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+    function getPoseMatrixForFrame(id) {
+      const pose =
+        (poses &&
+          poses.perFrame &&
+          poses.perFrame[String(id)]) ||
+        poses?.default ||
+        identity;
+
+      const matrix = new THREE.Matrix4();
+      matrix.set(
+        pose[0], pose[1], pose[2], pose[3], pose[4], pose[5], pose[6],
+        pose[7], pose[8], pose[9], pose[10], pose[11], pose[12], pose[13],
+        pose[14], pose[15]
+      );
+      return matrix;
+    }
+
+    function disposePointCloud(pointcloud) {
+      if (!pointcloud) return;
+      viewer.scene.scenePointCloud.remove(pointcloud);
+      pointcloud.dispose?.();
+    }
+
+    async function loadFrame(frame) {
+      return new Promise((resolve, reject) => {
+        Potree.loadPointCloud(
+          frame.url,
+          `frame_${frame.id}_${Date.now()}`,
+          (event) => {
+            try {
+              const pc = event.pointcloud;
+
+              // 1) 强制颜色模式（避免 RGBA=0 导致黑底黑点）
+              // 背景建议黑，白点最明显
+              (function forceWhite(pc) {
+                const marker = "__FORCE_WHITE__";
+                const fs = pc.material.fragmentShader;
+                if (!fs || fs.includes(marker)) return;
+
+                const lastBrace = fs.lastIndexOf("}");
+                if (lastBrace < 0) return;
+
+                pc.material.fragmentShader =
+                  fs.slice(0, lastBrace) +
+                  `\n  // ${marker}\n  gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n` +
+                  fs.slice(lastBrace);
+
+                pc.material.needsUpdate = true;
+              })(pc);
+
+              // 2) 应用位姿（目前 identity），并强制更新 world matrix
+              const poseMatrix = getPoseMatrixForFrame(frame.id);
+              // pc.matrixAutoUpdate = false;
+              // pc.matrix.copy(poseMatrix);
+              // pc.updateMatrixWorld(true);
+
+              viewer.scene.addPointCloud(pc);
+
+              // 3) 强制把相机对准该点云（前几帧都做，确保一定对准）
+              if (loadedQueue.length < 3) {
+                const bbox = pc.boundingBox.clone().applyMatrix4(pc.matrixWorld);
+                const center = bbox.getCenter(new THREE.Vector3());
+                const size = bbox.getSize(new THREE.Vector3());
+                const radius = Math.max(size.x, size.y, size.z);
+
+                // Potree 用 scene.view 控制相机
+                viewer.scene.view.position.set(center.x + radius * 2, center.y + radius * 2, center.z + radius * 1.5);
+                viewer.scene.view.lookAt(center);
+
+                viewer.fitToScreen();
+              }
+
+              console.log("[OK] loaded", frame.url, "points:", pc.numPoints);
+
+
+              loadedQueue.push({ id: frame.id, pc });
+              loadedMap.set(frame.id, pc);
+
+              const windowSize = scans?.windowSize ?? 1;
+              while (loadedQueue.length > windowSize) {
+                const old = loadedQueue.shift();
+                if (old) {
+                  disposePointCloud(old.pc);
+                  loadedMap.delete(old.id);
+                }
+              }
+
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          }
+        );
+      });
+    }
+
+    async function tick() {
+      if (!playing || !scans?.frames?.length) {
+        return;
+      }
+
+      const frame = scans.frames[frameIndex % scans.frames.length];
+      frameIndex += 1;
+
+      try {
+        await loadFrame(frame);
+      } catch (error) {
+        console.error("loadFrame failed", error);
+      }
+    }
+
+    function start() {
+      if (!scans?.frames?.length) return;
+      stop();
+      playing = true;
+      const interval = scans.intervalMs ?? 500;
+      timer = setInterval(tick, interval);
+      tick();
+    }
+
+    function stop() {
+      playing = false;
+      if (timer) {
+        clearInterval(timer);
+      }
+      timer = null;
+    }
+
+    function setIntervalMs(ms) {
+      if (!scans) {
+        scans = { intervalMs: ms, windowSize: 1, frames: [] };
+      } else {
+        scans.intervalMs = ms;
+      }
+      if (playing) {
+        start();
+      }
+    }
+
+    function setWindowSize(n) {
+      if (!scans) {
+        scans = { intervalMs: 2000, windowSize: n, frames: [] };
+      } else {
+        scans.windowSize = n;
+      }
+    }
+
+    function seek(i) {
+      frameIndex = Math.max(0, i | 0);
+      loadedQueue.forEach(({ pc }) => disposePointCloud(pc));
+      loadedQueue.length = 0;
+      loadedMap.clear();
+      tick();
+    }
+
+    async function setScansFromUrl(url) {
+      const res = await fetch(url);
+      scans = await res.json();
+      frameIndex = 0;
+    }
+
+    async function setPosesFromUrl(url) {
+      const res = await fetch(url);
+      poses = await res.json();
+      loadedQueue.forEach((item) => {
+        const matrix = getPoseMatrixForFrame(item.id);
+        item.pc.matrix.copy(matrix);
+      });
+    }
+
+    window.addEventListener("message", async (event) => {
+      const msg = event.data || {};
+      try {
+        if (msg.type === "SET_SCANS_URL" && msg.url) {
+          await setScansFromUrl(msg.url);
+          event.source?.postMessage(
+            { type: "SCANS_READY", frames: scans.frames?.length || 0 },
+            "*"
+          );
+        } else if (msg.type === "SET_POSES_URL" && msg.url) {
+          await setPosesFromUrl(msg.url);
+          event.source?.postMessage({ type: "POSES_READY" }, "*");
+        } else if (msg.type === "PLAY") {
+          start();
+        } else if (msg.type === "STOP") {
+          stop();
+        } else if (msg.type === "SET_INTERVAL") {
+          setIntervalMs(Number(msg.ms) || 1000);
+        } else if (msg.type === "SET_WINDOW") {
+          setWindowSize(Math.max(1, Number(msg.n) || 1));
+        } else if (msg.type === "SEEK") {
+          seek(Number(msg.i) || 0);
+        }
+      } catch (error) {
+        console.error("message handling failed", error);
+      }
+    });
+  </script>
+</body>
+</html>
