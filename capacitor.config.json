@@ -1,0 +1,9 @@
+{
+  "appId": "com.yourcompany.potreereactdemo",
+  "appName": "potree-react-demo",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "cleartext": true
+  }
+}

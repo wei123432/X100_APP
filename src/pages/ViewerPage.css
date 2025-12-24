@@ -1,0 +1,17 @@
+.viewer-page {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  overflow: hidden;
+  padding: 3px;
+  box-sizing: border-box;
+}
+
+.viewer-iframe {
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  border: none;
+  display: block;
+}

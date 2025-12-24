@@ -1,99 +1,47 @@
-:root {
-  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  color: #f5f5f5;
-  background-color: #111;
-}
-
+/* 全局重置 */
 * {
-  box-sizing: border-box;
-}
-
-body {
   margin: 0;
-  min-height: 100vh;
-  background-color: #111;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 #root {
   width: 100%;
-  height: 100vh;
-}
-
-button {
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 0.35rem 0.9rem;
-  font-size: 0.95rem;
-  font-weight: 500;
-  background-color: #1f1f1f;
-  color: inherit;
-  cursor: pointer;
-  transition: border-color 120ms ease, background-color 120ms ease;
-}
-
-button:hover:not(:disabled) {
-  border-color: #53b7ff;
-  background-color: #272727;
-}
-
-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
+  min-height: 100vh;
   background: #000;
 }
 
-.controls-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 16px;
-  background: rgba(0, 0, 0, 0.8);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+/* 移动端优化 */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
-.control-field,
-.seek-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.95rem;
+/* 防止移动端点击延迟 */
+a,
+button,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
 }
 
-.control-field input,
-.seek-field input[type="number"] {
-  width: 90px;
-  padding: 0.25rem 0.35rem;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: #181818;
-  color: inherit;
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-.seek-field input[type="range"] {
-  width: 240px;
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.frames-info {
-  margin-left: 8px;
-  opacity: 0.7;
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
 }
 
-.viewer-pane {
-  flex: 1;
-  background: #000;
-}
-
-.viewer-pane iframe {
-  border: none;
-  width: 100%;
-  height: 100%;
-  display: block;
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }

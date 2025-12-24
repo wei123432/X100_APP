@@ -1,32 +1,574 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport"
+    content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
   <title>Potree Player</title>
   <link rel="stylesheet" href="/potree/build/potree/potree.css" />
   <link rel="stylesheet" href="/potree/libs/jquery-ui/jquery-ui.min.css" />
+
   <style>
-    html,
-    body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
+    :root {
+      --hud-h: 3.2rem;
+      --hud-offset: 0px;
+      --content-offset: 0px;
+      --safe-top: max(env(safe-area-inset-top), -webkit-env(safe-area-inset-top), 24px);
+      --safe-right: max(env(safe-area-inset-right), -webkit-env(safe-area-inset-right), 24px);
+      --safe-bottom: max(env(safe-area-inset-bottom), -webkit-env(safe-area-inset-bottom), 24px);
+      --safe-left: max(env(safe-area-inset-left), -webkit-env(safe-area-inset-left), 24px);
     }
 
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #000;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      overscroll-behavior: none;
+      box-sizing: border-box;
+      font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", Arial;
+      font-size: 10px;
+      color: rgba(255,255,255,0.92);
+    }
+    *, *::before, *::after { box-sizing: inherit; }
+
+    #app {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      width: 100dvw;
+      height: 100dvh;
+      padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+      overflow: hidden;
+      touch-action: none;
+      background: #000;
+      transform: none;
+      transform-origin: top center;
+    }
+
+    /* ===== 顶部状态条（占位高度决定 potree_container 的 top） ===== */
+
+    /* ===== Potree 容器：顶部留出 HUD ===== */
+    
+    #hud {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: var(--hud-offset);
+      min-height: var(--hud-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 12px 10px;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(6px);
+      overflow: hidden;
+      white-space: nowrap;
+      user-select: none;
+      border-radius: 10px;
+    }
+
+    .hud-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      margin-bottom: 2px;
+    }
+    .hud-title {
+      font-weight: 700;
+      opacity: 0.92;
+      margin-right: 6px;
+    }
+    .hud-metrics {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      opacity: 0.85;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden;
+    }
+    .hud-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.10);
+      font-size: 13px;
+    }
+    .hud-pill strong { font-weight: 700; }
+
+    .hud-right{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      margin-bottom: 2px;
+    }
+    .storage {
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      font-size: 13px;
+      opacity: 0.9;
+      font-variant-numeric: tabular-nums;
+    }
+    .storage-bar{
+      width: 90px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.15);
+      overflow:hidden;
+    }
+    .storage-fill{
+      height: 100%;
+      width: 40%;
+      background: linear-gradient(90deg, #ffb800, #ff6b00);
+    }
+
+    .battery{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      font-size: 13px;
+      opacity: 0.9;
+      font-variant-numeric: tabular-nums;
+    }
+    .batt-bars{
+      display:flex;
+      gap: 2px;
+      align-items:flex-end;
+    }
+    .batt-bars i{
+      width: 6px;
+      height: 10px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.22);
+      display:block;
+    }
+    .batt-bars i.on{ background: rgba(80, 255, 160, 0.85); }
+
+    .btn-icon{
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.92);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+    }
+    .btn-icon:active{ transform: scale(0.98); }
     #potree_container {
       position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(var(--hud-h) + 8px + var(--hud-offset) + var(--content-offset));
+      bottom: 0;
+      touch-action: auto;
+      overflow: hidden;
+      border-radius: 10px;
+    }
+    canvas { width:100%; height:100%; touch-action:auto; }
+
+    /* ===== 叠加扫描 UI（左侧/右侧/弹窗/中间卡片） ===== */
+    #overlay {
+      position:absolute;
       inset: 0;
+      pointer-events: none; /* 关键：不挡 potree 手势 */
+    }
+    .rightbar{
+      position:absolute;
+      right: 0;
+      top: calc(var(--hud-h) + 18px + var(--hud-offset));
+      display:flex;
+      flex-direction: column;
+      align-items:flex-end;
+      gap: 14px;
+      pointer-events: auto;
+    }
+
+    .recordBtn{
+      width: 64px;
+      height: 64px;
+      border-radius: 999px;
+      border: 3px solid rgba(255,255,255,0.35);
+      background: rgba(0,0,0,0.15);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      position: relative;
+    }
+    .recordDot{
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background: #ff4d4f;
+      box-shadow: 0 0 0 2px rgba(255,77,79,0.35);
+    }
+    .recordStop{
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      background: #ff4d4f;
+      box-shadow: 0 0 0 2px rgba(255,77,79,0.35);
+    }
+    .recTime{
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      opacity: 0.85;
+      margin-top: -8px;
+    }
+
+    .cornerBtn{
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      color: rgba(255,255,255,0.92);
+      font-size: 18px;
+    }
+
+    .logoCard{
+      position:absolute;
+      left: calc(var(--safe-left) + 14px);
+      bottom: calc(var(--safe-bottom) + 14px);
+      width: 160px;
+      height: 90px;
+      border-radius: 16px;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.10);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      pointer-events: auto;
+    }
+    .logoCard .logo{
+      width: 90px;
+      height: 60px;
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at 30% 30%, rgba(170,255,80,0.25), transparent 55%),
+        linear-gradient(135deg, rgba(170,255,80,0.35), rgba(255,255,255,0.05));
+      border: 1px solid rgba(255,255,255,0.10);
+    }
+    .logoCard .ver{
+      position:absolute;
+      bottom: 8px;
+      left: 10px;
+      font-size: 11px;
+      opacity: 0.7;
+    }
+
+    /* 中间初始化卡片 */
+    .centerCard{
+      position:absolute;
+      left: 50%;
+      top: 52%;
+      transform: translate(-50%, -50%);
+      width: min(420px, 70vw);
+      height: 170px;
+      border-radius: 18px;
+      background: rgba(30,40,60,0.82);
+      border: 1px solid rgba(255,255,255,0.10);
+      display:flex;
+      flex-direction: column;
+      align-items:center;
+      justify-content:center;
+      gap: 10px;
+      pointer-events: none;
+    }
+    .centerCard .pin{
+      width: 42px; height: 42px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size: 22px;
+    }
+    .centerCard .txt{
+      font-weight: 700;
+      opacity: 0.92;
+      letter-spacing: 0.4px;
+    }
+    .hidden{ display:none !important; }
+
+    /* 弹窗遮罩 */
+    .modalMask{
+      position:absolute;
+      inset:0;
+      background: rgba(0,0,0,0.55);
+      pointer-events: auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 20px;
+    }
+    .modal{
+      width: min(780px, 86vw);
+      border-radius: 18px;
+      background: rgba(0,0,0,0.70);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(10px);
+      padding: 18px 18px 14px;
+      color: rgba(255,255,255,0.92);
+    }
+    .modal.bigTitle{
+      text-align:center;
+    }
+    .modal .slam{
+      font-size: 72px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      opacity: 0.18;
+      margin: 6px 0 -10px;
+    }
+    .modal .sub{
+      font-size: 22px;
+      font-weight: 700;
+      opacity: 0.92;
+      margin-bottom: 14px;
+    }
+    .row{
+      display:flex;
+      align-items:center;
+      gap: 12px;
+      margin: 12px 0;
+    }
+    .label{
+      width: 92px;
+      opacity: 0.75;
+      font-size: 14px;
+    }
+    .input, .select{
+      flex:1;
+      height: 42px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.92);
+      padding: 0 12px;
+      outline:none;
+    }
+    .startBtn{
+      position:absolute;
+      right: 24px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 70px;
+      height: 70px;
+      border-radius: 999px;
+      border: 3px solid rgba(255,255,255,0.25);
+      background: rgba(255,77,79,0.95);
+      color: #fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight: 800;
+      cursor:pointer;
+      box-shadow: 0 12px 26px rgba(255,77,79,0.18);
+    }
+    .startBtn:active{ transform: translateY(-50%) scale(0.98); }
+    .modalFooter{
+      margin-top: 18px;
+      opacity: 0.75;
+      font-size: 13px;
+      text-align:center;
+    }
+
+    /* 提示框 */
+    .promptBox{
+      width: min(520px, 74vw);
+      border-radius: 18px;
+      background: rgba(30,40,60,0.82);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 18px;
+      text-align:center;
+    }
+    .promptBox .t{
+      font-weight: 800;
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+    .promptBox .m{
+      opacity: 0.86;
+      margin-bottom: 14px;
+    }
+    .promptBox .close{
+      border: 0;
+      background: transparent;
+      color: rgba(80,255,160,0.9);
+      font-weight: 800;
+      cursor:pointer;
+      padding: 8px 16px;
+      border-radius: 12px;
+    }
+    .promptBox .close:active{
+      background: rgba(255,255,255,0.08);
+    }
+
+    @media (orientation: landscape) {
+      :root {
+        --hud-h: 2.6rem;
+        --hud-offset: 16px;
+        --content-offset: 30px;
+        --safe-top: max(env(safe-area-inset-top), -webkit-env(safe-area-inset-top), 24px);
+        --safe-bottom: max(env(safe-area-inset-bottom), -webkit-env(safe-area-inset-bottom), 24px);
+      }
+      .modal .slam{ font-size: 64px; }
+    }
+
+    @media (max-width: 480px) {
+      :root {
+        --hud-h: 2.4rem;
+        --hud-offset: 16px;
+        --content-offset: 30px;
+      }
+
+      #hud {
+        padding: 0.15rem 0.4rem 0.9rem;
+        gap: 6px;
+      }
+      .hud-left,
+      .hud-right {
+        margin-bottom: 10px;
+      }
+      .hud-right { transform: translateY(-4px); }
+      .hud-title { font-size: 12px; }
+      .hud-pill { font-size: 11px; padding: 3px 8px; }
+      .storage { font-size: 11px; }
+      .storage-bar { width: 70px; height: 5px; }
+      .battery { font-size: 11px; }
+      .batt-bars i { width: 5px; height: 9px; }
+
+      .rightbar { gap: 10px; }
+      .cornerBtn { width: 36px; height: 36px; font-size: 16px; }
+      .recordBtn { width: 54px; height: 54px; }
+      .recordDot { width: 28px; height: 28px; }
+      .recordStop { width: 22px; height: 22px; }
+      .recTime { font-size: 11px; }
+
+      .centerCard { width: min(320px, 80vw); height: 140px; }
+      .centerCard .txt { font-size: 12px; }
+
+      .modal { width: min(680px, 90vw); }
+      .modal .slam { font-size: 56px; }
+      .modal .sub { font-size: 18px; }
+      .label { width: 76px; font-size: 12px; }
+      .input, .select { height: 36px; font-size: 12px; }
+      .startBtn { width: 60px; height: 60px; }
+
+      .promptBox { width: min(420px, 84vw); }
+      .promptBox .t { font-size: 16px; }
+      .promptBox .m { font-size: 12px; }
     }
   </style>
 </head>
 
 <body>
-  <div id="potree_container"></div>
+  <div id="app">
+
+    <!-- 顶部状态条 -->
+    <div id="hud">
+      <div class="hud-left">
+        <button class="btn-icon" id="btn_back" title="返回">返回</button>
+        <div class="hud-title" id="scan_title">扫描待启动</div>
+
+        <div class="hud-metrics">
+          <span class="hud-pill">D: <strong id="d_val">0.00m</strong></span>
+          <span class="hud-pill">v: <strong id="v_val">0.00m/s</strong></span>
+          <span class="hud-pill" id="fix_pill"><strong id="fix_val">Fixed</strong></span>
+        </div>
+      </div>
+
+      <div class="hud-right">
+        <div class="storage">
+          <span id="storage_txt">342/477GB</span>
+          <div class="storage-bar"><div class="storage-fill" id="storage_fill"></div></div>
+        </div>
+        <div class="battery">
+          <div class="batt-bars" id="batt_bars">
+            <i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <span id="batt_txt">94%</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="potree_container"></div>
+
+    <!-- 叠加 UI（不挡 potree 手势） -->
+    <div id="overlay">
+      <div class="rightbar">
+        <button class="cornerBtn" id="btn_settings" title="设置">⚙</button>
+
+        <div class="recordBtn" id="btn_record" title="录制">
+          <div class="recordDot" id="record_shape"></div>
+        </div>
+        <div class="recTime" id="rec_time">00:00:00</div>
+
+        <button class="cornerBtn" id="btn_cube" title="视图">▢</button>
+        <button class="cornerBtn" id="btn_map" title="地图">⌖</button>
+      </div>
+
+      <!-- 初始化中间卡片 -->
+      <div class="centerCard hidden" id="init_card">
+        <div class="pin">📍</div>
+        <div class="txt">静止初始化开始</div>
+      </div>
+
+      <!-- 配置弹窗（图2） -->
+      <div class="modalMask hidden" id="modal_config_mask">
+        <div class="modal" style="position:relative;">
+          <div class="slam">2.0</div>
+          <div class="sub">Real-time SLAM</div>
+
+          <div class="row">
+            <div class="label">项目名称</div>
+            <input class="input" id="project_name" value="test" />
+          </div>
+
+          <div class="row">
+            <div class="label">GNSS模式</div>
+            <select class="select" id="gnss_mode">
+              <option value="RTK" selected>RTK</option>
+              <option value="PPK">PPK</option>
+              <option value="None">None</option>
+            </select>
+          </div>
+
+          <div class="startBtn" id="btn_start">启动</div>
+
+          <div class="modalFooter">启动作业前，请保持设备处于静置状态</div>
+        </div>
+      </div>
+
+      <!-- 提示框（图4） -->
+      <div class="modalMask hidden" id="modal_prompt_mask">
+        <div class="promptBox">
+          <div class="t">提示</div>
+          <div class="m">静止初始化完成，可正常开始使用设备</div>
+          <button class="close" id="btn_prompt_close">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="./libs/jquery/jquery-3.1.1.min.js"></script>
   <script src="./libs/jquery-ui/jquery-ui.min.js"></script>
@@ -42,6 +584,269 @@
   <script src="./libs/plasio/js/laslaz.js"></script>
 
   <script>
+    // =========================
+    // 1) 扫描 UI 状态机（新增）
+    // =========================
+    const ui = {
+      scanTitle: document.getElementById("scan_title"),
+      dVal: document.getElementById("d_val"),
+      vVal: document.getElementById("v_val"),
+      fixVal: document.getElementById("fix_val"),
+      storageTxt: document.getElementById("storage_txt"),
+      storageFill: document.getElementById("storage_fill"),
+      battTxt: document.getElementById("batt_txt"),
+      battBars: document.getElementById("batt_bars"),
+
+      btnBack: document.getElementById("btn_back"),
+      btnRecord: document.getElementById("btn_record"),
+      recordShape: document.getElementById("record_shape"),
+      recTime: document.getElementById("rec_time"),
+
+      initCard: document.getElementById("init_card"),
+
+      maskConfig: document.getElementById("modal_config_mask"),
+      projectName: document.getElementById("project_name"),
+      gnssMode: document.getElementById("gnss_mode"),
+      btnStart: document.getElementById("btn_start"),
+
+      maskPrompt: document.getElementById("modal_prompt_mask"),
+      btnPromptClose: document.getElementById("btn_prompt_close"),
+    };
+
+    const state = {
+      // idle -> config -> initializing -> prompt -> recording
+      recordState: "idle",
+      recording: false,
+      loadingPaused: false,
+      sec: 0,
+      timer: null,
+
+      // 状态栏设置，后续加入设备传输内容
+      D: 0.00,
+      v: 0.00,
+      fix: "Fixed",
+      storageUsed: 342,
+      storageTotal: 477,
+      battery: 94,
+
+      project: "test",
+      gnss: "RTK",
+    };
+    let waitForScansTimer = null;
+
+    function pad2(n){ return String(n).padStart(2, "0"); }
+    function fmtTime(sec){
+      const s = Math.max(0, sec|0);
+      const hh = (s/3600)|0;
+      const mm = ((s%3600)/60)|0;
+      const ss = s%60;
+      return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
+    }
+
+    function setVisible(el, visible){
+      el.classList.toggle("hidden", !visible);
+    }
+
+    function updateBatteryBars(p){
+      const bars = Math.round((Math.max(0, Math.min(100, p))/100)*5);
+      const nodes = ui.battBars.querySelectorAll("i");
+      nodes.forEach((n, idx) => n.classList.toggle("on", idx < bars));
+    }
+
+    function updateHUD(){
+      // 转太烂
+      let title = "扫描待启动";
+      if (state.recordState === "initializing") title = "扫描已启动";
+      if (state.recordState === "recording") title = "扫描已启动";
+      ui.scanTitle.textContent = title;
+
+      ui.dVal.textContent = `${state.D.toFixed(2)}m`;
+      ui.vVal.textContent = `${state.v.toFixed(2)}m/s`;
+      ui.fixVal.textContent = state.fix;
+
+      ui.storageTxt.textContent = `${state.storageUsed}/${state.storageTotal}GB`;
+      const pct = Math.max(0, Math.min(100, (state.storageUsed / Math.max(1, state.storageTotal))*100));
+      ui.storageFill.style.width = `${pct}%`;
+
+      ui.battTxt.textContent = `${state.battery}%`;
+      updateBatteryBars(state.battery);
+
+      ui.recTime.textContent = fmtTime(state.sec);
+
+      // ??????
+      ui.recordShape.className = state.recording ? "recordStop" : "recordDot";
+
+      // ???????
+      setVisible(ui.initCard, state.recordState === "initializing");
+    }
+
+    function openConfig(){
+      state.recordState = "config";
+      state.project = ui.projectName.value || state.project;
+      state.gnss = ui.gnssMode.value || state.gnss;
+      setVisible(ui.maskConfig, true);
+      setVisible(ui.maskPrompt, false);
+      updateHUD();
+    }
+
+    function closeConfig(){
+      setVisible(ui.maskConfig, false);
+    }
+
+    function startRecordingTimer(reset) {
+      if (reset) {
+        state.sec = 0;
+      }
+      if (state.timer) clearInterval(state.timer);
+      state.timer = setInterval(() => {
+        state.sec += 1;
+        updateHUD();
+      }, 1000);
+    }
+
+    function clearScansWaiter() {
+      if (waitForScansTimer) {
+        clearInterval(waitForScansTimer);
+        waitForScansTimer = null;
+      }
+    }
+
+    function startPlaybackWhenReady() {
+      clearScansWaiter();
+      if (scans && scans.frames && scans.frames.length > 0) {
+        start();
+        return;
+      }
+      console.warn("点云数据未加载，等待数据...");
+      waitForScansTimer = setInterval(() => {
+        if (scans && scans.frames && scans.frames.length > 0) {
+          clearScansWaiter();
+          start();
+          console.log("点云数据已加载，开始播放");
+        }
+      }, 100);
+    }
+
+    function beginRecording(resetTimer, keepPrompt) {
+      state.recording = true;
+      state.loadingPaused = false;
+      state.recordState = "recording";
+      setVisible(ui.maskConfig, false);
+      if (!keepPrompt) {
+        setVisible(ui.maskPrompt, false);
+      }
+      updateHUD();
+      if (resetTimer) {
+        startRecordingTimer(true);
+      }
+      startPlaybackWhenReady();
+    }
+
+    function startRecordingFlow(){
+      state.project = ui.projectName.value || "test";
+      state.gnss = ui.gnssMode.value || "RTK";
+
+      closeConfig();
+
+      // 开始录制计时
+      state.recording = true;
+      state.loadingPaused = false;
+      state.recordState = "initializing";
+      updateHUD();
+      startRecordingTimer(true);
+
+      // 初始化阶段（1.5秒后）完成 -> 显示提示框 -> 并开始加载点云
+      setTimeout(() => {
+        state.recordState = "prompt";
+        setVisible(ui.maskPrompt, true);
+        updateHUD();
+      }, 1500);
+    }
+
+    function closePrompt(){
+      setVisible(ui.maskPrompt, false);
+      state.recordState = "recording";
+      updateHUD();
+      beginRecording(false, false);
+    }
+
+    function pauseLoading(){
+      state.loadingPaused = true;
+      clearScansWaiter();
+      stop();
+      setVisible(ui.maskConfig, false);
+      setVisible(ui.maskPrompt, false);
+      updateHUD();
+    }
+
+    ui.btnRecord.addEventListener("click", () => {
+      if (state.recordState === "idle") {
+        openConfig();
+        return;
+      }
+
+      if (!state.loadingPaused) {
+        // 录制中：暂停加载（计时不中断）
+        pauseLoading();
+        return;
+      }
+
+      // 已暂停：继续加载（计时继续）
+      state.loadingPaused = false;
+      state.recordState = "recording";
+      updateHUD();
+      startPlaybackWhenReady();
+    });
+
+    ui.btnStart.addEventListener("click", startRecordingFlow);
+    ui.btnPromptClose.addEventListener("click", closePrompt);
+    // ?????????React????
+    ui.btnBack.addEventListener("click", () => {
+      window.parent?.postMessage({ type: "NAV_HOME" }, "*");
+    });
+
+
+    // 返回：通知父页面（React）回首页
+    
+
+    // 初始化一次 HUD
+    updateHUD();
+
+    // =========================
+    // 2) Potree 逻辑（你原代码：保留）
+    // =========================
+    // 兜底：防止部分环境不支持 dvh/dvw 导致容器为 0
+    function ensureAppSize() {
+      const scale = 1;
+      const appEl = document.getElementById("app");
+      const potreeEl = document.getElementById("potree_container");
+      if (appEl) {
+        appEl.style.width = `${window.innerWidth / scale}px`;
+        appEl.style.height = `${window.innerHeight / scale}px`;
+      }
+      if (potreeEl) {
+        const rootStyle = getComputedStyle(document.documentElement);
+        const safeTop = parseFloat(rootStyle.getPropertyValue("--safe-top")) || 0;
+        const safeBottom = parseFloat(rootStyle.getPropertyValue("--safe-bottom")) || 0;
+        const hudH = parseFloat(rootStyle.getPropertyValue("--hud-h")) || 0;
+        const hudOffset = parseFloat(rootStyle.getPropertyValue("--hud-offset")) || 0;
+        const contentOffset = parseFloat(rootStyle.getPropertyValue("--content-offset")) || 0;
+        const gap = 8;
+        const availableH = Math.max(
+          0,
+          window.innerHeight - safeTop - safeBottom - hudH - gap - hudOffset - contentOffset
+        );
+        const top = hudH + gap + hudOffset + contentOffset;
+
+        potreeEl.style.left = "0px";
+        potreeEl.style.top = `${top / scale}px`;
+        potreeEl.style.width = `${window.innerWidth / scale}px`;
+        potreeEl.style.height = `${availableH / scale}px`;
+      }
+    }
+    ensureAppSize();
+    window.addEventListener("resize", ensureAppSize);
+
     const container = document.getElementById("potree_container");
     const viewer = new Potree.Viewer(container);
     viewer.setEDLEnabled(false);
@@ -49,6 +854,197 @@
     viewer.setPointBudget(2_000_000);
     viewer.loadSettingsFromURL();
     viewer.setBackground("gradient");
+
+    viewer.scene.view.position.set(10, 10, 10);
+    viewer.scene.view.lookAt(new THREE.Vector3(0, 0, 0));
+
+    // ===== 关键：强制 render loop + resize 监听 =====
+    // 1) 强制确保 canvas 有尺寸 & viewer resize
+    function ensureResize() {
+      viewer.onResize?.();
+    }
+    ensureResize();
+    window.addEventListener("resize", ensureResize);
+    window.addEventListener("orientationchange", () => setTimeout(ensureResize, 50));
+
+    // 容器尺寸变化也触发（iframe/横竖屏特别有用）
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => ensureResize()).observe(container);
+    }
+
+    // 2) 强制 render loop（避免某些 build 默认 loop 没跑）
+    viewer.useDefaultRenderLoop = false;
+
+    function loop(t) {
+      requestAnimationFrame(loop);
+      viewer.update(1 / 60, t);
+      viewer.render();
+    }
+    requestAnimationFrame(loop);
+    console.log("✓ Potree render loop 已启动");
+
+    //自动聚焦模型，放在场景中央
+    function framePointCloud(pc, fill = 0.45) {
+      if (!pc?.boundingBox) return;
+      const bbox = pc.boundingBox.clone().applyMatrix4(pc.matrixWorld);
+      const center = bbox.getCenter(new THREE.Vector3());
+      const size = bbox.getSize(new THREE.Vector3());
+      const radius = Math.max(size.x, size.y, size.z) * 0.5 || 1;
+      const view = viewer.scene.view;
+      const fovValue = viewer.getFOV ? viewer.getFOV() : viewer.fov || 60;
+      const fovRad = (fovValue * Math.PI) / 180;
+      const distForFull = radius / Math.tan(Math.max(0.1, fovRad * 0.5));
+      const dist = distForFull / Math.max(0.1, fill);
+
+      const pivot = center.clone();
+      const dir = view.position.clone().sub(view.getPivot ? view.getPivot() : pivot);
+      if (dir.length() < 1e-6) dir.set(1, 1, 1);
+      dir.normalize().multiplyScalar(dist);
+
+      view.position.copy(pivot.clone().add(dir));
+      if (view.lookAt) view.lookAt(pivot);
+      if (view.setPivot) view.setPivot(pivot);
+      else if (view.pivot) view.pivot.copy(pivot);
+    }
+
+    //移动端手势控制
+    function installMobileControls(viewerInstance, element) {
+      const view = viewerInstance.scene.view;
+      const ROT_SPEED = 0.005;
+      const LONGPRESS_MS = 250;
+      const TAP_SLOP = 8;
+
+      let longPressTimer = null;
+      let longPressActive = false;
+      let last1 = null;
+      let lastMid = null;
+      let lastDist = 0;
+
+      function getPivot() {
+        if (view.getPivot) return view.getPivot().clone();
+        if (view.pivot) return view.pivot.clone();
+        return new THREE.Vector3();
+      }
+      function setPivot(p) {
+        if (view.setPivot) view.setPivot(p);
+        else if (view.pivot) view.pivot.copy(p);
+      }
+
+      function panByPixels(dx, dy) {
+        const cam = viewerInstance.scene.getActiveCamera
+          ? viewerInstance.scene.getActiveCamera()
+          : viewerInstance.camera;
+        if (!cam) return;
+        const pivot = getPivot();
+        const pos = view.position.clone();
+        const dist = pos.distanceTo(pivot);
+        const fovValue = viewerInstance.getFOV ? viewerInstance.getFOV() : viewerInstance.fov || 60;
+        const fov = (fovValue * Math.PI) / 180;
+        const h = element.clientHeight || window.innerHeight || 1;
+        const worldPerPx = (2 * dist * Math.tan(fov / 2)) / h;
+
+        const dir = new THREE.Vector3();
+        cam.getWorldDirection(dir);
+        const right = new THREE.Vector3().crossVectors(dir, cam.up).normalize();
+        const up = cam.up.clone().normalize();
+
+        const move = new THREE.Vector3()
+          .addScaledVector(right, -dx * worldPerPx)
+          .addScaledVector(up, dy * worldPerPx);
+
+        view.position.add(move);
+        pivot.add(move);
+        setPivot(pivot);
+        if (view.lookAt) view.lookAt(pivot);
+      }
+
+      function zoomByScale(scale) {
+        if (!isFinite(scale) || scale <= 0) return;
+        const pivot = getPivot();
+        const pos = view.position.clone();
+        const dir = pos.sub(pivot);
+        const dist = dir.length();
+        if (dist < 1e-6) return;
+        const newDist = THREE.MathUtils.clamp(dist / scale, 0.1, 1e9);
+        dir.normalize().multiplyScalar(newDist);
+        view.position.copy(pivot.clone().add(dir));
+        if (view.lookAt) view.lookAt(pivot);
+      }
+
+      function clearLongPress() {
+        if (longPressTimer) clearTimeout(longPressTimer);
+        longPressTimer = null;
+        longPressActive = false;
+      }
+
+      element.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 1) {
+          const t = e.touches[0];
+          last1 = { x: t.clientX, y: t.clientY };
+          longPressActive = false;
+          clearLongPress();
+          longPressTimer = setTimeout(() => { longPressActive = true; }, LONGPRESS_MS);
+        } else if (e.touches.length === 2) {
+          clearLongPress();
+          const a = e.touches[0];
+          const b = e.touches[1];
+          lastMid = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+          lastDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        }
+        e.preventDefault();
+      }, { passive: false });
+
+      element.addEventListener("touchmove", (e) => {
+        if (e.touches.length === 1 && last1) {
+          const t = e.touches[0];
+          const x = t.clientX, y = t.clientY;
+          const dx = x - last1.x, dy = y - last1.y;
+
+          if (!longPressActive && (Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP)) clearLongPress();
+
+          if (longPressActive) panByPixels(dx, dy);
+          else {
+            view.yaw += -dx * ROT_SPEED;
+            view.pitch += -dy * ROT_SPEED;
+            view.pitch = THREE.MathUtils.clamp(view.pitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
+          }
+
+          last1 = { x, y };
+          e.preventDefault();
+        }
+
+        if (e.touches.length === 2) {
+          const a = e.touches[0];
+          const b = e.touches[1];
+          const mid = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+          const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+          if (lastMid) panByPixels(mid.x - lastMid.x, mid.y - lastMid.y);
+          if (lastDist > 0) zoomByScale(dist / lastDist);
+
+          lastMid = mid;
+          lastDist = dist;
+          e.preventDefault();
+        }
+      }, { passive: false });
+
+      element.addEventListener("touchend", (e) => {
+        if (e.touches.length === 0) {
+          clearLongPress();
+          last1 = null;
+          lastMid = null;
+          lastDist = 0;
+        } else if (e.touches.length === 1) {
+          const t = e.touches[0];
+          last1 = { x: t.clientX, y: t.clientY };
+          lastMid = null;
+          lastDist = 0;
+          clearLongPress();
+          longPressTimer = setTimeout(() => { longPressActive = true; }, LONGPRESS_MS);
+        }
+      }, { passive: true });
+    }
+    installMobileControls(viewer, container);
 
     let scans = null;
     let poses = null;
@@ -62,17 +1058,16 @@
 
     function getPoseMatrixForFrame(id) {
       const pose =
-        (poses &&
-          poses.perFrame &&
-          poses.perFrame[String(id)]) ||
+        (poses && poses.perFrame && poses.perFrame[String(id)]) ||
         poses?.default ||
         identity;
 
       const matrix = new THREE.Matrix4();
       matrix.set(
-        pose[0], pose[1], pose[2], pose[3], pose[4], pose[5], pose[6],
-        pose[7], pose[8], pose[9], pose[10], pose[11], pose[12], pose[13],
-        pose[14], pose[15]
+        pose[0], pose[1], pose[2], pose[3],
+        pose[4], pose[5], pose[6], pose[7],
+        pose[8], pose[9], pose[10], pose[11],
+        pose[12], pose[13], pose[14], pose[15]
       );
       return matrix;
     }
@@ -84,96 +1079,111 @@
     }
 
     async function loadFrame(frame) {
+      console.log("正在加载点云帧:", frame.id, "URL:", frame.url);
       return new Promise((resolve, reject) => {
-        Potree.loadPointCloud(
-          frame.url,
-          `frame_${frame.id}_${Date.now()}`,
-          (event) => {
-            try {
-              const pc = event.pointcloud;
+        Potree.loadPointCloud(frame.url, `frame_${frame.id}_${Date.now()}`, (event) => {
+          try {
+            const pc = event.pointcloud;
 
-              // 1) 强制颜色模式（避免 RGBA=0 导致黑底黑点）
-              // 背景建议黑，白点最明显
-              (function forceWhite(pc) {
-                const marker = "__FORCE_WHITE__";
-                const fs = pc.material.fragmentShader;
-                if (!fs || fs.includes(marker)) return;
+            // 确保点云可见
+            pc.visible = true;
 
-                const lastBrace = fs.lastIndexOf("}");
-                if (lastBrace < 0) return;
+            // 设置材质基本属性
+            pc.material.opacity = 1.0;
+            pc.material.size = 0.5;
+            pc.material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+            pc.material.shape = Potree.PointShape.CIRCLE;
+            pc.material.minSize = 0.5;
+            pc.material.maxSize = 1.5;
 
-                pc.material.fragmentShader =
-                  fs.slice(0, lastBrace) +
-                  `\n  // ${marker}\n  gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n` +
-                  fs.slice(lastBrace);
-
-                pc.material.needsUpdate = true;
-              })(pc);
-
-              // 2) 应用位姿（目前 identity），并强制更新 world matrix
-              const poseMatrix = getPoseMatrixForFrame(frame.id);
-              // pc.matrixAutoUpdate = false;
-              // pc.matrix.copy(poseMatrix);
-              // pc.updateMatrixWorld(true);
-
-              viewer.scene.addPointCloud(pc);
-
-              // 3) 强制把相机对准该点云（前几帧都做，确保一定对准）
-              if (loadedQueue.length < 3) {
-                const bbox = pc.boundingBox.clone().applyMatrix4(pc.matrixWorld);
-                const center = bbox.getCenter(new THREE.Vector3());
-                const size = bbox.getSize(new THREE.Vector3());
-                const radius = Math.max(size.x, size.y, size.z);
-
-                // Potree 用 scene.view 控制相机
-                viewer.scene.view.position.set(center.x + radius * 2, center.y + radius * 2, center.z + radius * 1.5);
-                viewer.scene.view.lookAt(center);
-
-                viewer.fitToScreen();
-              }
-
-              console.log("[OK] loaded", frame.url, "points:", pc.numPoints);
-
-
-              loadedQueue.push({ id: frame.id, pc });
-              loadedMap.set(frame.id, pc);
-
-              const windowSize = scans?.windowSize ?? 1;
-              while (loadedQueue.length > windowSize) {
-                const old = loadedQueue.shift();
-                if (old) {
-                  disposePointCloud(old.pc);
-                  loadedMap.delete(old.id);
-                }
-              }
-
-              resolve();
-            } catch (error) {
-              reject(error);
+            // 尝试使用 RGB 颜色模式（如果点云有颜色数据）
+            if (Potree.PointColorType && Potree.PointColorType.RGB) {
+              pc.material.pointColorType = Potree.PointColorType.RGB;
             }
+
+            // 1) 强制白色渲染（通过 shader）
+            (function forceWhite(pc) {
+              const marker = "__FORCE_WHITE__";
+              const fs = pc.material.fragmentShader;
+              if (!fs || fs.includes(marker)) return;
+
+              const lastBrace = fs.lastIndexOf("}");
+              if (lastBrace < 0) return;
+
+              pc.material.fragmentShader =
+                fs.slice(0, lastBrace) +
+                `\n  // ${marker}\n  gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n` +
+                fs.slice(lastBrace);
+
+              pc.material.needsUpdate = true;
+            })(pc);
+
+            // 2) 应用位姿并添加到场景
+            const poseMatrix = getPoseMatrixForFrame(frame.id);
+            // pc.matrixAutoUpdate = false;
+            // pc.matrix.copy(poseMatrix);
+            // pc.updateMatrixWorld(true);
+
+            viewer.scene.addPointCloud(pc);
+
+            // 3) 前几帧自动聚焦点云
+            if (loadedQueue.length < 3) {
+              viewer.fitToScreen();
+              viewer.onResize?.();
+              console.log("✓ 自动聚焦点云");
+            }
+
+            console.log("✓ 加载成功 - 帧", frame.id, "点云对象:", pc);
+
+            loadedQueue.push({ id: frame.id, pc });
+            loadedMap.set(frame.id, pc);
+
+            const windowSize = scans?.windowSize ?? 1;
+            while (loadedQueue.length > windowSize) {
+              const old = loadedQueue.shift();
+              if (old) {
+                disposePointCloud(old.pc);
+                loadedMap.delete(old.id);
+              }
+            }
+
+            resolve();
+          } catch (error) {
+            console.error("loadFrame 错误:", error);
+            reject(error);
           }
-        );
+        });
       });
     }
 
     async function tick() {
-      if (!playing || !scans?.frames?.length) {
+      if (!playing || !scans?.frames?.length) return;
+      if (frameIndex >= scans.frames.length) {
+        stop();
+        state.recording = false;
+        state.loadingPaused = false;
+        state.recordState = "idle";
+        if (state.timer) clearInterval(state.timer);
+        state.timer = null;
+        updateHUD();
         return;
       }
 
-      const frame = scans.frames[frameIndex % scans.frames.length];
+      const frame = scans.frames[frameIndex];
       frameIndex += 1;
 
-      try {
-        await loadFrame(frame);
-      } catch (error) {
-        console.error("loadFrame failed", error);
-      }
+      try { await loadFrame(frame); }
+      catch (e) { console.error("loadFrame failed", e); }
     }
 
     function start() {
-      if (!scans?.frames?.length) return;
+      if (!scans?.frames?.length) {
+        console.warn("start() 被调用，但 scans 数据为空");
+        return;
+      }
+      console.log("开始播放点云，共", scans.frames.length, "帧");
       stop();
+      if (frameIndex >= scans.frames.length) frameIndex = 0;
       playing = true;
       const interval = scans.intervalMs ?? 500;
       timer = setInterval(tick, interval);
@@ -182,29 +1192,19 @@
 
     function stop() {
       playing = false;
-      if (timer) {
-        clearInterval(timer);
-      }
+      if (timer) clearInterval(timer);
       timer = null;
     }
 
     function setIntervalMs(ms) {
-      if (!scans) {
-        scans = { intervalMs: ms, windowSize: 1, frames: [] };
-      } else {
-        scans.intervalMs = ms;
-      }
-      if (playing) {
-        start();
-      }
+      if (!scans) scans = { intervalMs: ms, windowSize: 1, frames: [] };
+      else scans.intervalMs = ms;
+      if (playing) start();
     }
 
     function setWindowSize(n) {
-      if (!scans) {
-        scans = { intervalMs: 2000, windowSize: n, frames: [] };
-      } else {
-        scans.windowSize = n;
-      }
+      if (!scans) scans = { intervalMs: 2000, windowSize: n, frames: [] };
+      else scans.windowSize = n;
     }
 
     function seek(i) {
@@ -216,9 +1216,12 @@
     }
 
     async function setScansFromUrl(url) {
+
+      console.log("开始加载 scans.json:", url);
       const res = await fetch(url);
       scans = await res.json();
       frameIndex = 0;
+      console.log("scans.json 加载完成，共", scans.frames?.length || 0, "帧");
     }
 
     async function setPosesFromUrl(url) {
@@ -235,10 +1238,7 @@
       try {
         if (msg.type === "SET_SCANS_URL" && msg.url) {
           await setScansFromUrl(msg.url);
-          event.source?.postMessage(
-            { type: "SCANS_READY", frames: scans.frames?.length || 0 },
-            "*"
-          );
+          event.source?.postMessage({ type: "SCANS_READY", frames: scans.frames?.length || 0 }, "*");
         } else if (msg.type === "SET_POSES_URL" && msg.url) {
           await setPosesFromUrl(msg.url);
           event.source?.postMessage({ type: "POSES_READY" }, "*");
