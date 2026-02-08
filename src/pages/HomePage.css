@@ -345,3 +345,7 @@
     margin: 10px auto 30px;
   }
 }
+
+.status-online {
+  color: #52c41a !important;
+}

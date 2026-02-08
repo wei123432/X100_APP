@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useDevice } from "./DeviceProvider";
 import "./HomePage.css";
 
 export default function HomePage() {
   const navigate = useNavigate();
   const [showMenu, setShowMenu] = useState(false);
+  const { meta, conn, status } = useDevice();
 
+  // 横屏模式
   async function requestLandscape() {
     if (!screen?.orientation?.lock) return;
     try {
@@ -18,15 +21,21 @@ export default function HomePage() {
     }
   }
 
-  // 模拟设备数据
-  const device = {
-    name: "X100",
-    version: "0.0.1",
-    code: "A259A88251",
-    status: "offline",
-    battery: 0,
-    storage: 0,
-  };
+  const device = useMemo(() => {
+    const online = !!conn?.connected && (status?.power ?? "ON") !== "OFF";
+    const battery = online ? Number(status?.battery ?? 0) : 0;
+    const used = online ? Number(status?.storageUsed ?? 0) : 0;
+    const total = online ? Number(status?.storageTotal ?? 0) : 0;
+    return {
+      name: meta?.name || "X100",
+      version: meta?.version || "0.0.1",
+      code: meta?.code || "-",
+      online,
+      battery: Number.isFinite(battery) ? battery : 0,
+      storageUsed: Number.isFinite(used) ? used : 0,
+      storageTotal: Number.isFinite(total) ? total : 0,
+    };
+  }, [meta, conn, status]);
 
   const handleGoClick = async () => {
     await requestLandscape();
@@ -74,7 +83,6 @@ export default function HomePage() {
       {/* 设备信息区域 */}
       <div className="device-info-section">
         <div className="device-image">
-          {/* 设备图片占位 */}
           <div className="device-placeholder">
             <div className="device-icon">📷</div>
           </div>
@@ -93,7 +101,9 @@ export default function HomePage() {
 
           <div className="detail-item">
             <span className="detail-label">设备状态</span>
-            <span className="detail-value status-offline">设备离线</span>
+            <span className={`detail-value ${device.online ? "status-online" : "status-offline"}`}>
+              {device.online ? "设备在线" : "设备离线"}
+            </span>
           </div>
 
           {/* 电池电量 */}
@@ -110,7 +120,9 @@ export default function HomePage() {
           {/* 存储空间 */}
           <div className="storage-section">
             <span className="storage-icon">💾</span>
-            <span className="storage-text">{device.storage}GB</span>
+            <span className="storage-text">
+              {device.storageTotal > 0 ? `${device.storageUsed}/${device.storageTotal}GB` : "0GB"}
+            </span>
           </div>
         </div>
       </div>

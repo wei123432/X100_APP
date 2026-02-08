@@ -1,10 +1,22 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useDevice } from "./DeviceProvider";
 import "./ViewerPage.css";
 
 export default function ViewerPage() {
   const navigate = useNavigate();
   const iframeRef = useRef(null);
+  const { conn } = useDevice();
+
+  const scansUrl = useMemo(() => {
+    const root = (conn?.httpRoot || "").replace(/\/$/, "");
+    return root ? `${root}/scans.json` : "/scans.json";
+  }, [conn?.httpRoot]);
+
+  const posesUrl = useMemo(() => {
+    const root = (conn?.httpRoot || "").replace(/\/$/, "");
+    return root ? `${root}/poses.json` : "/poses.json";
+  }, [conn?.httpRoot]);
 
   async function requestLandscape() {
     if (!screen?.orientation?.lock) return;
@@ -21,13 +33,9 @@ export default function ViewerPage() {
   useEffect(() => {
     requestLandscape();
 
-    // 监听来自 player.html 的消息
     function onMsg(ev) {
       const msg = ev.data || {};
-      if (msg.type === "NAV_HOME") {
-        // 返回首页
-        navigate("/");
-      }
+      if (msg.type === "NAV_HOME") navigate("/");
     }
 
     window.addEventListener("message", onMsg);
@@ -35,11 +43,20 @@ export default function ViewerPage() {
   }, [navigate]);
 
   function onIframeLoad() {
-    // iframe 加载完成后，发送点云数据路径
     const iframe = iframeRef.current;
     if (iframe && iframe.contentWindow) {
-      iframe.contentWindow.postMessage({ type: "SET_SCANS_URL", url: "/scans.json" }, "*");
-      iframe.contentWindow.postMessage({ type: "SET_POSES_URL", url: "/poses.json" }, "*");
+      // ✅ 只在连接到设备时才加载scans.json和poses.json
+      // 实时模式下不需要加载静态文件
+      if (conn?.httpRoot) {
+        iframe.contentWindow.postMessage({ type: "SET_SCANS_URL", url: scansUrl }, "*");
+        iframe.contentWindow.postMessage({ type: "SET_POSES_URL", url: posesUrl }, "*");
+      }
+
+      // 传递WebSocket URL到iframe
+      const wsUrl = conn?.wsUrl || localStorage.getItem("WS_URL") || "";
+      if (wsUrl) {
+        iframe.contentWindow.postMessage({ type: "SET_WS_URL", url: wsUrl }, "*");
+      }
     }
   }
 

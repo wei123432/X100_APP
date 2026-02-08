@@ -732,9 +732,7 @@
   <script src="./libs/plasio/js/laslaz.js"></script>
 
   <script>
-    // =========================
-    // 1) 扫描 UI 状态机（新增）
-    // =========================
+    // 扫描 UI 状态机（新增）
     const ui = {
       scanTitle: document.getElementById("scan_title"),
       dVal: document.getElementById("d_val"),
@@ -761,6 +759,7 @@
       btnPromptClose: document.getElementById("btn_prompt_close"),
     };
 
+    //全局状态机
     const state = {
       // idle -> config -> initializing -> prompt -> recording
       recordState: "idle",
@@ -802,7 +801,7 @@
     }
 
     function updateHUD() {
-      // 转太烂
+      // 状态栏
       let title = "扫描待启动";
       if (state.recordState === "initializing") title = "扫描已启动";
       if (state.recordState === "recording") title = "扫描已启动";
@@ -861,18 +860,13 @@
 
     function startPlaybackWhenReady() {
       clearScansWaiter();
-      if (scans && scans.frames && scans.frames.length > 0) {
+
+      // 实时模式：直接开始，不等待scans.json
+      // 点云会通过WebSocket的FRAME消息实时推送
+      if (!playing) {
         start();
-        return;
+        console.log("[实时模式] 开始接收实时点云数据");
       }
-      console.warn("点云数据未加载，等待数据...");
-      waitForScansTimer = setInterval(() => {
-        if (scans && scans.frames && scans.frames.length > 0) {
-          clearScansWaiter();
-          start();
-          console.log("点云数据已加载，开始播放");
-        }
-      }, 100);
     }
 
     function beginRecording(resetTimer, keepPrompt) {
@@ -891,28 +885,25 @@
     }
 
     function startRecordingFlow() {
-      // ✅ 新增：录制前确保 WS 已连接
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        connectWS(getDefaultWsUrl());
-      }
+      console.log("[UI] 启动按钮点击");
       state.project = ui.projectName.value || "test";
       state.gnss = ui.gnssMode.value || "RTK";
 
       closeConfig();
 
-      // 开始录制计时
       state.recording = true;
       state.loadingPaused = false;
-      state.recordState = "initializing";
+      state.recordState = "recording";
+      setVisible(ui.maskPrompt, false);
       updateHUD();
       startRecordingTimer(true);
 
-      // 初始化阶段（1.5秒后）完成 -> 显示提示框 -> 并开始加载点云
-      setTimeout(() => {
-        state.recordState = "prompt";
-        setVisible(ui.maskPrompt, true);
-        updateHUD();
-      }, 1500);
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        startAfterWs = true;
+        connectWS(getDefaultWsUrl());
+        return;
+      }
+      startPlaybackWhenReady();
     }
 
     function closePrompt() {
@@ -950,7 +941,9 @@
       startPlaybackWhenReady();
     });
 
-    ui.btnStart.addEventListener("click", startRecordingFlow);
+    if (ui.btnStart) {
+      ui.btnStart.addEventListener("click", startRecordingFlow);
+    }
     ui.btnPromptClose.addEventListener("click", closePrompt);
     // ?????????React????
     ui.btnBack.addEventListener("click", () => {
@@ -975,6 +968,8 @@
 
     // 初始化一次 HUD
     updateHUD();
+
+    // 等待父页面下发 WS 地址（SET_WS_URL）后再连接
 
     // =========================
     // 2) Potree 逻辑（你原代码：保留）
@@ -1018,8 +1013,12 @@
     viewer.setPointBudget(2_000_000);
     viewer.loadSettingsFromURL();
     viewer.setBackground("gradient");
+    viewer.setControls(viewer.fpControls);
+    if (viewer.fpControls) {
+      viewer.fpControls.enabled = true;
+    }
 
-    viewer.scene.view.position.set(10, 10, 10);
+    viewer.scene.view.position.set(0, 0, 0);
     viewer.scene.view.lookAt(new THREE.Vector3(0, 0, 0));
 
     // ===== 关键：强制 render loop + resize 监听 =====
@@ -1043,9 +1042,58 @@
       requestAnimationFrame(loop);
       viewer.update(1 / 60, t);
       viewer.render();
+
+      // ✅ 参考 pointcloud_view.dart 的 _CloudPainter.paint (第1244-1294行)
+      // 在每一帧渲染机器人位姿（坐标轴 + 中心点）
+      if (robotPoseAvailable && viewer?.scene?.scene) {
+        drawRobotPose();
+      }
     }
     requestAnimationFrame(loop);
     console.log("✓ Potree render loop 已启动");
+
+    // ✅ 新增：绘制机器人位姿（参考 Dart 代码）
+    let robotAxisHelper = null;
+    let robotCenterSphere = null;
+
+    function drawRobotPose() {
+      // 参考 pointcloud_view.dart 第1244-1294行
+      // 绘制：
+      // 1. 三个坐标轴（X红色、Y绿色、Z蓝色）
+      // 2. 中心白色圆点
+
+      console.log("[drawRobotPose] 开始绘制，robotPosition:", robotPosition.x, robotPosition.y, robotPosition.z);
+
+      if (!viewer?.scene?.scene) {
+        console.warn("[drawRobotPose] viewer.scene.scene 不存在");
+        return;
+      }
+
+      // 移除旧的坐标轴和中心点
+      if (robotAxisHelper) {
+        viewer.scene.scene.remove(robotAxisHelper);
+        robotAxisHelper = null;
+      }
+      if (robotCenterSphere) {
+        viewer.scene.scene.remove(robotCenterSphere);
+        robotCenterSphere = null;
+      }
+
+      // 创建坐标轴（参考 Dart 第1272-1284行）
+      const axisLength = 0.6; // Dart 代码中是 0.6
+      robotAxisHelper = new THREE.AxesHelper(axisLength);
+      robotAxisHelper.position.copy(robotPosition);
+      viewer.scene.scene.add(robotAxisHelper);
+      console.log("[drawRobotPose] 已添加坐标轴，位置:", robotAxisHelper.position);
+
+      // 创建中心点（参考 Dart 第1286行）
+      const sphereGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+      const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      robotCenterSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+      robotCenterSphere.position.copy(robotPosition);
+      viewer.scene.scene.add(robotCenterSphere);
+      console.log("[drawRobotPose] 已添加中心球体，位置:", robotCenterSphere.position);
+    }
 
     //自动聚焦模型，放在场景中央
     function framePointCloud(pc, fill = 0.45) {
@@ -1215,9 +1263,44 @@
     let timer = null;
     let playing = false;
     let frameIndex = 0;
+    const AUTO_PLAY_ON_CONNECT = true; // WS 连接后自动 PLAY，确保实时帧显示
 
     const loadedQueue = [];
     const loadedMap = new Map();
+    const MAX_RT_FRAMES = 50; // 实时帧最多保留 50 帧，等批次替换
+    const BATCH_SIZE = 50;
+
+    const batchQueue = [];
+    const superQueue = [];
+
+    const frameQueue = [];
+    let frameProcessing = false;
+
+    const trajectory = {
+      line: null,
+      geometry: null,
+      positions: [],
+    };
+
+    // ✅ 机器人位姿状态（参考 pointcloud_view.dart）
+    let robotPosition = new THREE.Vector3(0, 0, 0);
+    let robotPoseAvailable = false;
+
+    // 兜底：若启动按钮丢失，自动补回
+    if (!ui.btnStart) {
+      const modal = document.querySelector("#modal_config_mask .modal");
+      if (modal) {
+        const btn = document.createElement("div");
+        btn.className = "startBtn";
+        btn.id = "btn_start";
+        btn.textContent = "启动";
+        modal.appendChild(btn);
+        ui.btnStart = btn;
+      }
+    }
+
+    const POSE_HEIGHT = 1.6;
+    const TRAJ_MAX_POINTS = 20000;
     const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
     function getPoseMatrixForFrame(id) {
@@ -1259,28 +1342,12 @@
             pc.material.shape = Potree.PointShape.CIRCLE;
             pc.material.minSize = 0.5;
             pc.material.maxSize = 1.5;
+            pc.material.activeAttributeName = "rgba";
 
             // 尝试使用 RGB 颜色模式（如果点云有颜色数据）
             if (Potree.PointColorType && Potree.PointColorType.RGB) {
               pc.material.pointColorType = Potree.PointColorType.RGB;
             }
-
-            // 1) 强制白色渲染（通过 shader）
-            (function forceWhite(pc) {
-              const marker = "__FORCE_WHITE__";
-              const fs = pc.material.fragmentShader;
-              if (!fs || fs.includes(marker)) return;
-
-              const lastBrace = fs.lastIndexOf("}");
-              if (lastBrace < 0) return;
-
-              pc.material.fragmentShader =
-                fs.slice(0, lastBrace) +
-                `\n  // ${marker}\n  gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n` +
-                fs.slice(lastBrace);
-
-              pc.material.needsUpdate = true;
-            })(pc);
 
             // 2) 应用位姿并添加到场景
             const poseMatrix = getPoseMatrixForFrame(frame.id);
@@ -1297,13 +1364,41 @@
               console.log("✓ 自动聚焦点云");
             }
 
+            // 4) 更新轨迹和第一人称跟随
+            try {
+              // 参考 pointcloud_view.dart 的逻辑
+              // 从 Odometry 消息中提取位置（msg['pose']['pose']['position']）
+              // 位姿数据来自 pc_transmission.py 的 broadcast_pose()
+
+              // 尝试从 poses 获取位姿
+              const poseMatrix = getPoseMatrixForFrame(frame.id);
+              const e = poseMatrix.elements;
+
+              // 尝试提取位置（支持 row-major 和 col-major）
+              const t1 = new THREE.Vector3(e[12], e[13], e[14]); // col-major
+              const t2 = new THREE.Vector3(e[3], e[7], e[11]);   // row-major
+              const posePos = (t1.lengthSq() > 1e-6) ? t1 : (t2.lengthSq() > 1e-6 ? t2 : null);
+
+              if (posePos && isFinite(posePos.x) && isFinite(posePos.y) && isFinite(posePos.z)) {
+                // ✅ 有有效位姿数据
+                // 注意：不添加轨迹点，因为 Dart 代码中没有轨迹线
+                // 只在 applyPose() 中处理实时位姿显示
+
+                console.log("✓ 检测到位姿数据:", posePos.x.toFixed(2), posePos.y.toFixed(2), posePos.z.toFixed(2));
+              } else {
+                // ✅ 没有有效位姿，不做任何处理
+                console.log("✓ 未检测到有效位姿数据");
+              }
+            } catch (err) {
+              console.warn("检查位姿数据失败:", err);
+            }
+
             console.log("✓ 加载成功 - 帧", frame.id, "点云对象:", pc);
 
             loadedQueue.push({ id: frame.id, pc });
             loadedMap.set(frame.id, pc);
 
-            const windowSize = scans?.windowSize ?? 1;
-            while (loadedQueue.length > windowSize) {
+            while (loadedQueue.length > MAX_RT_FRAMES) {
               const old = loadedQueue.shift();
               if (old) {
                 disposePointCloud(old.pc);
@@ -1318,6 +1413,156 @@
           }
         });
       });
+    }
+
+    function enqueueFrame(frame) {
+      frameQueue.push(frame);
+      if (!frameProcessing) {
+        processFrameQueue();
+      }
+    }
+
+    async function processFrameQueue() {
+      frameProcessing = true;
+      while (frameQueue.length) {
+        const frame = frameQueue.shift();
+        if (!frame) continue;
+        try {
+          await loadFrame(frame);
+        } catch (e) {
+          console.error("loadFrame failed", e);
+        }
+      }
+      frameProcessing = false;
+    }
+
+    async function loadBatch(msg) {
+      return new Promise((resolve, reject) => {
+        Potree.loadPointCloud(msg.url, `batch_${msg.id}_${Date.now()}`, (event) => {
+          try {
+            const pc = event.pointcloud;
+            pc.visible = true;
+            pc.material.opacity = 1.0;
+            pc.material.size = 1.0;
+            pc.material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+            pc.material.shape = Potree.PointShape.CIRCLE;
+            pc.material.activeAttributeName = "rgba";
+            if (Potree.PointColorType && Potree.PointColorType.RGB) {
+              pc.material.pointColorType = Potree.PointColorType.RGB;
+            }
+            viewer.scene.addPointCloud(pc);
+            batchQueue.push({ id: msg.id, pc });
+
+            const removeCount = Math.max(1, Number(msg.count || BATCH_SIZE));
+            for (let i = 0; i < removeCount; i += 1) {
+              const old = loadedQueue.shift();
+              if (!old) break;
+              disposePointCloud(old.pc);
+              loadedMap.delete(old.id);
+            }
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+    }
+
+    async function loadSuper(msg) {
+      return new Promise((resolve, reject) => {
+        Potree.loadPointCloud(msg.url, `super_${msg.id}_${Date.now()}`, (event) => {
+          try {
+            const pc = event.pointcloud;
+            pc.visible = true;
+            pc.material.opacity = 1.0;
+            pc.material.size = 1.0;
+            pc.material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+            pc.material.shape = Potree.PointShape.CIRCLE;
+            pc.material.activeAttributeName = "rgba";
+            if (Potree.PointColorType && Potree.PointColorType.RGB) {
+              pc.material.pointColorType = Potree.PointColorType.RGB;
+            }
+            viewer.scene.addPointCloud(pc);
+            superQueue.push({ id: msg.id, pc });
+
+            const replaceIds = Array.isArray(msg.replaceBatches) ? msg.replaceBatches : [];
+            if (replaceIds.length) {
+              const keep = [];
+              for (const item of batchQueue) {
+                if (replaceIds.includes(item.id)) {
+                  disposePointCloud(item.pc);
+                } else {
+                  keep.push(item);
+                }
+              }
+              batchQueue.length = 0;
+              batchQueue.push(...keep);
+            }
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+    }
+
+    function ensureTrajectory() {
+      // ✅ 注意：参考 Dart 代码，不需要轨迹线
+      // Dart 代码中只显示机器人当前位置的坐标轴，没有轨迹线
+      // 如果需要轨迹线，可以取消注释下面的代码
+
+      // if (trajectory.line || !viewer?.scene?.scene) return;
+      // const geom = new THREE.BufferGeometry();
+      // geom.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
+      // const mat = new THREE.LineBasicMaterial({ color: 0x00ffff });
+      // const line = new THREE.Line(geom, mat);
+      // viewer.scene.scene.add(line);
+      // trajectory.line = line;
+      // trajectory.geometry = geom;
+    }
+
+    function addTrajectoryPoint(p) {
+      // ✅ 注意：参考 Dart 代码，不需要轨迹线
+      // Dart 代码中只显示机器人当前位置，不累积轨迹点
+      // 如果需要轨迹线，可以取消注释下面的代码
+
+      // ensureTrajectory();
+      // trajectory.positions.push(p.x, p.y, p.z);
+      // const max = TRAJ_MAX_POINTS * 3;
+      // if (trajectory.positions.length > max) {
+      //   trajectory.positions.splice(0, trajectory.positions.length - max);
+      // }
+      // const geom = trajectory.geometry;
+      // if (!geom) return;
+      // geom.setAttribute("position", new THREE.Float32BufferAttribute(trajectory.positions, 3));
+      // geom.setDrawRange(0, trajectory.positions.length / 3);
+      // geom.attributes.position.needsUpdate = true;
+    }
+
+    function applyPose(pose) {
+      // ✅ 参考 pointcloud_view.dart 的 _handleOdometryMessage (第290-313行)
+      // 从 Odometry 消息中提取位置：msg['pose']['pose']['position']
+      if (!viewer?.scene?.view) return;
+
+      const p = pose.position || {};
+      const x = Number(p.x || 0);
+      const y = Number(p.y || 0);
+      const z = Number(p.z || 0);
+
+      // 验证位置数据有效性
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
+        console.warn("applyPose: 无效的位置数据", p);
+        return;
+      }
+
+      // 更新机器人位置
+      robotPosition.set(x, y, z);
+      robotPoseAvailable = true;
+
+      console.log(`✓ 更新机器人位置: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+
+      // 注意：Dart 代码中没有相机跟随逻辑，只是显示机器人位置
+      // 如果需要相机跟随，可以在这里添加
     }
 
     async function tick() {
@@ -1423,6 +1668,7 @@
       }
     }
 
+    // Http url 拉取json
     async function setScansFromUrl(url) {
 
       console.log("开始加载 scans.json:", url);
@@ -1445,8 +1691,9 @@
     let ws = null;
     let wsUrl = null;
     let datasetRootFromServer = null;
+    let startAfterWs = false;
 
-    // 你可以用 ?ws=ws://192.168.1.10:8001/ws 来注入
+    // 你可以用ws=ws://10.100.2.20:8000/ws 来注入
     function isValidWsUrl(u) {
       if (!u) return false;
       if (u.includes("<PC局域网IP>")) return false;
@@ -1482,12 +1729,26 @@
 
       ws.onopen = () => {
         console.log("WS connected");
+        // 先告知服务端客户端就绪，否则服务端不会广播实时帧
+        ws.send(JSON.stringify({ type: "CLIENT_READY" }));
         // 你 PC 端 receiver 里允许 HELLO
         ws.send(JSON.stringify({ type: "HELLO", client: "player.html" }));
+        // 可选：立即拉状态
+        ws.send(JSON.stringify({ type: "GET_STATUS" }));
+
+        if (AUTO_PLAY_ON_CONNECT) {
+          playing = true;
+          ws.send(JSON.stringify({ type: "PLAY" }));
+        }
 
         // 如果用户已经在录制态，就让 PC 直接开始推
         if (state.recording && !state.loadingPaused) {
           ws.send(JSON.stringify({ type: "PLAY" }));
+        }
+
+        if (startAfterWs) {
+          startAfterWs = false;
+          startPlaybackWhenReady();
         }
       };
 
@@ -1508,6 +1769,7 @@
         }
 
         const t = msg.type;
+        console.log("[WS] msg", t, msg);
 
         if (t === "DATASET_ROOT") {
           datasetRootFromServer = msg.root;
@@ -1534,18 +1796,47 @@
         }
 
         if (t === "FRAME") {
-          // 关键：收到帧就加载（模拟扫描仪实时推送）
-          if (!playing) return;                 // stop() 会把 playing=false
-          if (state.loadingPaused) return;      // pauseLoading() 会置 true
+          // 实时帧：立即加载，不检查playing状态（录制开始后就应该显示）
+          if (state.loadingPaused) return;
           if (!msg.url) return;
 
           const frame = { id: msg.id ?? frameIndex, url: msg.url };
           frameIndex = (msg.id ?? frameIndex) + 1;
 
+          console.log(`[实时帧] 收到第 ${frame.id} 帧，URL: ${frame.url}`);
+          enqueueFrame(frame);
+          return;
+        }
+
+        if (t === "BATCH") {
+          // ✅ 批次降采样：立即加载
+          if (state.loadingPaused) return;
+          if (!msg.url) return;
+          console.log(`[批次] 收到 batch_${msg.id}，替换帧 ${msg.covers?.[0]}-${msg.covers?.[1]}`);
           try {
-            await loadFrame(frame);             // 仍用你原来的 loadFrame（不改样式）
+            await loadBatch(msg);
           } catch (e) {
-            console.error("loadFrame failed", e);
+            console.error("loadBatch failed", e);
+          }
+          return;
+        }
+
+        if (t === "SUPER") {
+          // ✅ 超级降采样：立即加载
+          if (state.loadingPaused) return;
+          if (!msg.url) return;
+          console.log(`[超级] 收到 super_${msg.id}，替换 batch ${msg.replaceBatches}`);
+          try {
+            await loadSuper(msg);
+          } catch (e) {
+            console.error("loadSuper failed", e);
+          }
+          return;
+        }
+
+        if (t === "POSE") {
+          if (msg.pose) {
+            applyPose(msg.pose);
           }
           return;
         }
@@ -1567,6 +1858,8 @@
         } else if (msg.type === "SET_POSES_URL" && msg.url) {
           await setPosesFromUrl(msg.url);
           event.source?.postMessage({ type: "POSES_READY" }, "*");
+        } else if (msg.type === "SET_WS_URL" && msg.url) {
+          connectWS(msg.url);
         } else if (msg.type === "PLAY") {
           start();
         } else if (msg.type === "STOP") {
