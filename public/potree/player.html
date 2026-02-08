@@ -1079,12 +1079,12 @@
         robotCenterSphere = null;
       }
 
-      // 创建坐标轴（参考 Dart 第1272-1284行）
-      const axisLength = 0.6; // Dart 代码中是 0.6
-      robotAxisHelper = new THREE.AxesHelper(axisLength);
-      robotAxisHelper.position.copy(robotPosition);
-      viewer.scene.scene.add(robotAxisHelper);
-      console.log("[drawRobotPose] 已添加坐标轴，位置:", robotAxisHelper.position);
+      // 创建坐标轴（参考 Dart 第1272-1284行）- 已按需关闭显示
+      // const axisLength = 0.6; // Dart 代码中是 0.6
+      // robotAxisHelper = new THREE.AxesHelper(axisLength);
+      // robotAxisHelper.position.copy(robotPosition);
+      // viewer.scene.scene.add(robotAxisHelper);
+      // console.log("[drawRobotPose] 已添加坐标轴，位置:", robotAxisHelper.position);
 
       // 创建中心点（参考 Dart 第1286行）
       const sphereGeometry = new THREE.SphereGeometry(0.1, 16, 16);
@@ -1304,6 +1304,44 @@
     const TRAJ_MAX_POINTS = 20000;
     const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function loadPointCloudOnce(url, name, timeoutMs) {
+      return new Promise((resolve, reject) => {
+        let done = false;
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          reject(new Error(`load timeout: ${url}`));
+        }, timeoutMs);
+
+        Potree.loadPointCloud(url, name, (event) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(event);
+        });
+      });
+    }
+
+    async function loadPointCloudWithRetry(url, name, retries = 1, timeoutMs = 8000) {
+      let lastErr = null;
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+          return await loadPointCloudOnce(url, name, timeoutMs);
+        } catch (err) {
+          lastErr = err;
+          console.warn(`[loadPointCloud] failed attempt ${attempt + 1}/${retries + 1}:`, err?.message || err);
+          if (attempt < retries) {
+            await sleep(500);
+          }
+        }
+      }
+      throw lastErr || new Error("loadPointCloud failed");
+    }
+
     function getPoseMatrixForFrame(id) {
       const pose =
         (poses && poses.perFrame && poses.perFrame[String(id)]) ||
@@ -1328,86 +1366,86 @@
 
     async function loadFrame(frame) {
       console.log("正在加载点云帧:", frame.id, "URL:", frame.url);
-      return new Promise((resolve, reject) => {
-        Potree.loadPointCloud(frame.url, `frame_${frame.id}_${Date.now()}`, (event) => {
-          try {
-            const pc = event.pointcloud;
+      try {
+        const event = await loadPointCloudWithRetry(
+          frame.url,
+          `frame_${frame.id}_${Date.now()}`,
+          12,
+          58000
+        );
+        const pc = event.pointcloud;
 
-            // 确保点云可见
-            pc.visible = true;
+        // 确保点云可见
+        pc.visible = true;
 
-            // 设置材质基本属性
-            pc.material.opacity = 1.0;
-            pc.material.size = 0.5;
-            pc.material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
-            pc.material.shape = Potree.PointShape.CIRCLE;
-            pc.material.minSize = 0.5;
-            pc.material.maxSize = 1.5;
-            pc.material.activeAttributeName = "rgba";
+        // 设置材质基本属性
+        pc.material.opacity = 1.0;
+        pc.material.size = 0.5;
+        pc.material.pointSizeType = Potree.PointSizeType.FIXED;
+        pc.material.shape = Potree.PointShape.CIRCLE;
+        pc.material.minSize = 0.5;
+        pc.material.maxSize = 1.5;
+        pc.material.activeAttributeName = "rgba";
 
-            // 尝试使用 RGB 颜色模式（如果点云有颜色数据）
-            if (Potree.PointColorType && Potree.PointColorType.RGB) {
-              pc.material.pointColorType = Potree.PointColorType.RGB;
-            }
+        // 尝试使用 RGB 颜色模式（如果点云有颜色数据）
+        if (Potree.PointColorType && Potree.PointColorType.RGB) {
+          pc.material.pointColorType = Potree.PointColorType.RGB;
+        }
 
-            // 2) 应用位姿并添加到场景
-            const poseMatrix = getPoseMatrixForFrame(frame.id);
-            // pc.matrixAutoUpdate = false;
-            // pc.matrix.copy(poseMatrix);
-            // pc.updateMatrixWorld(true);
+        // 2) 应用位姿并添加到场景
+        const poseMatrix = getPoseMatrixForFrame(frame.id);
+        // pc.matrixAutoUpdate = false;
+        // pc.matrix.copy(poseMatrix);
+        // pc.updateMatrixWorld(true);
 
-            viewer.scene.addPointCloud(pc);
+        viewer.scene.addPointCloud(pc);
 
-            // 3) 前几帧自动聚焦点云
-            if (!hasCameraPose && loadedQueue.length < 3) {
-              viewer.fitToScreen();
-              viewer.onResize?.();
-              console.log("✓ 自动聚焦点云");
-            }
+        // 3) 前几帧自动聚焦点云
+        if (!hasCameraPose && loadedQueue.length < 3) {
+          viewer.fitToScreen();
+          viewer.onResize?.();
+          console.log("✓ 自动聚焦点云");
+        }
 
-            // 4) 更新轨迹和第一人称跟随
-            try {
-              // ✅ 参考 pointcloud_view.dart 的逻辑
-              // 从 Odometry 消息中提取位置（msg['pose']['pose']['position']）
-              // 位姿数据来自 pc_transmission.py 的 broadcast_pose()
+        // 4) 更新轨迹和第一人称跟随
+        try {
+          // ✅ 参考 pointcloud_view.dart 的逻辑
+          // 从 Odometry 消息中提取位置（msg['pose']['pose']['position']）
+          // 位姿数据来自 pc_transmission.py 的 broadcast_pose()
 
-              // 尝试从 poses 获取位姿
-              const poseMatrix = getPoseMatrixForFrame(frame.id);
-              const e = poseMatrix.elements;
+          // 尝试从 poses 获取位姿
+          const poseMatrix = getPoseMatrixForFrame(frame.id);
+          const e = poseMatrix.elements;
 
-              // 尝试提取位置（支持 row-major 和 col-major）
-              const t1 = new THREE.Vector3(e[12], e[13], e[14]); // col-major
-              const t2 = new THREE.Vector3(e[3], e[7], e[11]);   // row-major
-              const posePos = (t1.lengthSq() > 1e-6) ? t1 : (t2.lengthSq() > 1e-6 ? t2 : null);
+          // 尝试提取位置（支持 row-major 和 col-major）
+          const t1 = new THREE.Vector3(e[12], e[13], e[14]); // col-major
+          const t2 = new THREE.Vector3(e[3], e[7], e[11]);   // row-major
+          const posePos = (t1.lengthSq() > 1e-6) ? t1 : (t2.lengthSq() > 1e-6 ? t2 : null);
 
-              if (posePos && isFinite(posePos.x) && isFinite(posePos.y) && isFinite(posePos.z)) {
-                // ✅ 有有效位姿数据
-                // 注意：不添加轨迹点，因为 Dart 代码中没有轨迹线
-                // 只在 applyPose() 中处理实时位姿显示
+          if (posePos && isFinite(posePos.x) && isFinite(posePos.y) && isFinite(posePos.z)) {
+            // ✅ 有有效位姿数据
+            // 注意：不添加轨迹点，因为 Dart 代码中没有轨迹线
+            // 只在 applyPose() 中处理实时位姿显示
 
-                console.log("✓ 检测到位姿数据:", posePos.x.toFixed(2), posePos.y.toFixed(2), posePos.z.toFixed(2));
-              } else {
-                // ✅ 没有有效位姿，不做任何处理
-                console.log("✓ 未检测到有效位姿数据");
-              }
-            } catch (err) {
-              console.warn("检查位姿数据失败:", err);
-            }
-
-            console.log("✓ 加载成功 - 帧", frame.id, "点云对象:", pc);
-
-            loadedQueue.push({ id: frame.id, pc });
-            loadedMap.set(frame.id, pc);
-
-            // 保留实时帧，等 batch 替换时再清理
-
-            resolve();
-          } catch (error) {
-            console.error("loadFrame 错误:", error);
-            reject(error);
+            console.log("✓ 检测到位姿数据:", posePos.x.toFixed(2), posePos.y.toFixed(2), posePos.z.toFixed(2));
+          } else {
+            // ✅ 没有有效位姿，不做任何处理
+            console.log("✓ 未检测到有效位姿数据");
           }
-        });
-      });
+        } catch (err) {
+          console.warn("检查位姿数据失败:", err);
+        }
+
+        console.log("✓ 加载成功 - 帧", frame.id, "点云对象:", pc);
+
+        loadedQueue.push({ id: frame.id, pc });
+        loadedMap.set(frame.id, pc);
+
+        // 保留实时帧，等 batch 替换时再清理
+      } catch (error) {
+        console.error("loadFrame failed:", error);
+        throw error;
+      }
     }
 
     function enqueueFrame(frame) {
@@ -1432,73 +1470,84 @@
     }
 
     async function loadBatch(msg) {
-      return new Promise((resolve, reject) => {
-        Potree.loadPointCloud(msg.url, `batch_${msg.id}_${Date.now()}`, (event) => {
-          try {
-            const pc = event.pointcloud;
-            pc.visible = true;
-            pc.material.opacity = 1.0;
-            pc.material.size = 1.0;
-            pc.material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
-            pc.material.shape = Potree.PointShape.CIRCLE;
-            pc.material.activeAttributeName = "rgba";
-            if (Potree.PointColorType && Potree.PointColorType.RGB) {
-              pc.material.pointColorType = Potree.PointColorType.RGB;
-            }
-            viewer.scene.addPointCloud(pc);
-            batchQueue.push({ id: msg.id, pc });
+      const event = await loadPointCloudWithRetry(
+        msg.url,
+        `batch_${msg.id}_${Date.now()}`,
+        12,
+        58000
+      );
+      const pc = event.pointcloud;
+      pc.visible = true;
+      pc.material.opacity = 1.0;
+      pc.material.size = 1.0;
+      pc.material.pointSizeType = Potree.PointSizeType.FIXED;
+      pc.material.shape = Potree.PointShape.CIRCLE;
+      pc.material.activeAttributeName = "rgba";
+      if (Potree.PointColorType && Potree.PointColorType.RGB) {
+        pc.material.pointColorType = Potree.PointColorType.RGB;
+      }
+      viewer.scene.addPointCloud(pc);
+      batchQueue.push({ id: msg.id, pc });
 
-            const removeCount = Math.max(1, Number(msg.count || BATCH_SIZE));
-            for (let i = 0; i < removeCount; i += 1) {
-              const old = loadedQueue.shift();
-              if (!old) break;
-              disposePointCloud(old.pc);
-              loadedMap.delete(old.id);
-            }
-            resolve();
-          } catch (e) {
-            reject(e);
+      const covers = Array.isArray(msg.covers) ? msg.covers : null;
+      if (covers && covers.length >= 2) {
+        const startId = Number(covers[0]);
+        const endId = Number(covers[1]);
+        const keep = [];
+        for (const item of loadedQueue) {
+          if (item.id >= startId && item.id <= endId) {
+            disposePointCloud(item.pc);
+            loadedMap.delete(item.id);
+          } else {
+            keep.push(item);
           }
-        });
-      });
+        }
+        loadedQueue.length = 0;
+        loadedQueue.push(...keep);
+      } else {
+        const removeCount = Math.max(1, Number(msg.count || BATCH_SIZE));
+        for (let i = 0; i < removeCount; i += 1) {
+          const old = loadedQueue.shift();
+          if (!old) break;
+          disposePointCloud(old.pc);
+          loadedMap.delete(old.id);
+        }
+      }
     }
 
     async function loadSuper(msg) {
-      return new Promise((resolve, reject) => {
-        Potree.loadPointCloud(msg.url, `super_${msg.id}_${Date.now()}`, (event) => {
-          try {
-            const pc = event.pointcloud;
-            pc.visible = true;
-            pc.material.opacity = 1.0;
-            pc.material.size = 1.0;
-            pc.material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
-            pc.material.shape = Potree.PointShape.CIRCLE;
-            pc.material.activeAttributeName = "rgba";
-            if (Potree.PointColorType && Potree.PointColorType.RGB) {
-              pc.material.pointColorType = Potree.PointColorType.RGB;
-            }
-            viewer.scene.addPointCloud(pc);
-            superQueue.push({ id: msg.id, pc });
+      const event = await loadPointCloudWithRetry(
+        msg.url,
+        `super_${msg.id}_${Date.now()}`,
+        12,
+        58000
+      );
+      const pc = event.pointcloud;
+      pc.visible = true;
+      pc.material.opacity = 1.0;
+      pc.material.size = 1.0;
+      pc.material.pointSizeType = Potree.PointSizeType.FIXED;
+      pc.material.shape = Potree.PointShape.CIRCLE;
+      pc.material.activeAttributeName = "rgba";
+      if (Potree.PointColorType && Potree.PointColorType.RGB) {
+        pc.material.pointColorType = Potree.PointColorType.RGB;
+      }
+      viewer.scene.addPointCloud(pc);
+      superQueue.push({ id: msg.id, pc });
 
-            const replaceIds = Array.isArray(msg.replaceBatches) ? msg.replaceBatches : [];
-            if (replaceIds.length) {
-              const keep = [];
-              for (const item of batchQueue) {
-                if (replaceIds.includes(item.id)) {
-                  disposePointCloud(item.pc);
-                } else {
-                  keep.push(item);
-                }
-              }
-              batchQueue.length = 0;
-              batchQueue.push(...keep);
-            }
-            resolve();
-          } catch (e) {
-            reject(e);
+      const replaceIds = Array.isArray(msg.replaceBatches) ? msg.replaceBatches : [];
+      if (replaceIds.length) {
+        const keep = [];
+        for (const item of batchQueue) {
+          if (replaceIds.includes(item.id)) {
+            disposePointCloud(item.pc);
+          } else {
+            keep.push(item);
           }
-        });
-      });
+        }
+        batchQueue.length = 0;
+        batchQueue.push(...keep);
+      }
     }
 
     function ensureTrajectory() {
