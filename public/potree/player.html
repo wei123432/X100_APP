@@ -1269,6 +1269,7 @@
     const loadedMap = new Map();
     const MAX_RT_FRAMES = 50; // 实时帧最多保留 50 帧，等批次替换
     const BATCH_SIZE = 50;
+    let hasCameraPose = false;
 
     const batchQueue = [];
     const superQueue = [];
@@ -1358,7 +1359,7 @@
             viewer.scene.addPointCloud(pc);
 
             // 3) 前几帧自动聚焦点云
-            if (loadedQueue.length < 3) {
+            if (!hasCameraPose && loadedQueue.length < 3) {
               viewer.fitToScreen();
               viewer.onResize?.();
               console.log("✓ 自动聚焦点云");
@@ -1398,13 +1399,7 @@
             loadedQueue.push({ id: frame.id, pc });
             loadedMap.set(frame.id, pc);
 
-            while (loadedQueue.length > MAX_RT_FRAMES) {
-              const old = loadedQueue.shift();
-              if (old) {
-                disposePointCloud(old.pc);
-                loadedMap.delete(old.id);
-              }
-            }
+            // 保留实时帧，等 batch 替换时再清理
 
             resolve();
           } catch (error) {
@@ -1558,11 +1553,14 @@
       // 更新机器人位置
       robotPosition.set(x, y, z);
       robotPoseAvailable = true;
+      hasCameraPose = true;
 
-      console.log(`✓ 更新机器人位置: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+      const view = viewer.scene.view;
+      view.position.set(x, y, z);
 
-      // 注意：Dart 代码中没有相机跟随逻辑，只是显示机器人位置
-      // 如果需要相机跟随，可以在这里添加
+      console.log(`✓ 更新相机位置: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+
+      // 注意：只更新位置，不改变朝向
     }
 
     async function tick() {
@@ -1802,6 +1800,10 @@
 
           const frame = { id: msg.id ?? frameIndex, url: msg.url };
           frameIndex = (msg.id ?? frameIndex) + 1;
+
+          if (msg.pose) {
+            applyPose(msg.pose);
+          }
 
           console.log(`[实时帧] 收到第 ${frame.id} 帧，URL: ${frame.url}`);
           enqueueFrame(frame);
